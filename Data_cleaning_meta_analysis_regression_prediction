@@ -1,0 +1,819 @@
+##--Steps--##
+# 1. Inverse-variance meta-analysis to get a) overall replication rate, b) replication rate per P-value and c) replication ratio per odds ratio
+## 1.1 Descriptive statistics
+# 2. Create figures for all phenotype data together, and per P-value and odds ratio
+# 3. Linear regression to get overall slope change between cohorts
+# 4. Prediction model
+
+###################-------------------Read in all data for phenotypes-------------------###################
+# Full data 
+# 6289 SNPS that were significant in the discovery cohort that were also present in the replication cohort
+library(data.table)
+library(wesanderson)
+list.names <- list.files(path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/My_results_dfs",
+                         pattern = ".tsv$", full.names = TRUE)
+df_full <- lapply(list.names, fread)
+
+names <- c("Asthma", "BMI", "CAD", "DBP", "Eczema", "Hip Circumference", "Pulse rate", "SBP", "Waist circumference")
+
+names(df_full) <- names
+
+# Data for figure 3
+list.names3 <- list.files(path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/My_results_dfs/For_figure3", 
+                          pattern = ".tsv", full.names = TRUE)
+
+df_3 <- lapply(list.names3, fread)
+
+names(df_3) <- c("Asthma", "BMI", "CAD", "DBP", "Eczema", "Hip Circumference", "Pulse rate", "SBP", "Waist circumference")
+
+# Merge into one df
+new_df <- do.call(rbind, df_3)
+
+# Change "not" to "Not Replicated" 
+new_df$replicated <- gsub("not", "Not Replicated", new_df$replicated)
+
+# Remove != Discovery (currently double the number of SNPs)
+new_df <- filter(new_df, new_df$Cohort == "Discovery")
+
+# Make numeric column of replicated
+new_df$n_replicated <- ifelse(new_df$replicated == "Replicated",1,0)
+
+## Replication rate across phenotypes
+rep_phen <- ggplot(new_df, aes(Phenotype, fill = replicated)) + geom_bar() + 
+  ylab("Count") + 
+  xlab("") +
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw() + 
+  scale_fill_manual(values=wes_palette(n=2, name="FantasticFox1")) + 
+  theme(axis.text.x = element_text(angle = 50, hjust = 1)) +
+  theme(legend.title = element_blank())
+ggsave(plot = rep_phen, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/", 
+       filename = "rep_phen.tiff", device = "tiff", dpi = 300)
+
+rep_phen_fill <- ggplot(new_df, aes(Phenotype, fill = replicated)) + geom_bar(position = "fill") + 
+  ylab("Proportion") + 
+  xlab("") +
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw() + 
+  scale_fill_manual(values=wes_palette(n=2, name="FantasticFox1")) + 
+  theme(axis.text.x = element_text(angle = 50, hjust = 1)) +
+  theme(legend.title = element_blank())
+ggsave(plot = rep_phen_fill, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/", 
+       filename = "rep_phen_fill.tiff", device = "tiff", dpi = 300)
+
+# combine above 
+rep_phen <- ggplot(new_df, aes(Phenotype, fill = replicated)) + geom_bar() + 
+  ylab("Count") + 
+  xlab("") +
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw() + 
+  scale_fill_manual(values=wes_palette(n=2, name="FantasticFox1")) + 
+  theme(axis.text.x = element_text(angle = 50, hjust = 1)) +
+  theme(legend.position = "none")
+combined_rep_phen <- ggarrange(rep_phen, rep_phen_fill, labels = c("A", "B"))
+ggsave(plot = combined_rep_phen, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/", 
+       filename = "combined_rep_phen.tiff", device = "tiff", dpi = 300)
+
+###################-------------------Meta-analysis:ALL-------------------###################
+##--Create matrix for meta-analysis--##
+MA_df <- matrix(nrow = 9, ncol = 3)
+colnames(MA_df) <- c("Phenotype", "SNPs_replicated", "Total_Significant_SNPs")
+MA_df <- as.data.frame(MA_df)
+
+# Add phenotype names
+MA_df$Phenotype <- names(df_full)
+
+# Add Total significant SNPs
+MA_df$Total_Significant_SNPs <- lapply(df_full, nrow)
+MA_df$Total_Significant_SNPs <- unlist(MA_df$Total_Significant_SNPs)
+
+# Add total of replicated SNPs
+MA_df$SNPs_replicated <- lapply(df_full, function(x) {
+  nrow(filter(x, x$replicated == "Replicated"))
+})
+MA_df$SNPs_replicated <- unlist(MA_df$SNPs_replicated)
+
+# Save
+# write.table(MA_df, file = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/My_results_dfs/results_for_JI_feb2020/df_for_MA.tsv",
+#             quote = FALSE, row.names = FALSE, sep = '\t')
+
+##--Construct inverse variance meta-analysis--##
+library(meta)
+# MA_df <- fread("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/My_results_dfs/results_for_JI_feb2020/df_for_MA.tsv")
+
+# All phenotypes
+IV_MA <- metaprop(MA_df$SNPs_replicated, MA_df$Total_Significant_SNPs)
+png(file = "IV_MA_all.png", width = 600, height = 600)
+setwd("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/")
+forest(IV_MA, studlab = c("Asthma", "BMI", "CAD", "DBP", "Eczema", "Hip Circumference", "Pulse rate", "SBP", "Waist circumference"))
+dev.off()
+
+# Binary only phenotypes
+IV_MA_binary <- metaprop(MA_df[c(1,3,5),2], MA_df[c(1,3,5),3])
+png(file = "IV_MA_binary.png", width = 600, height = 600)
+setwd("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/")
+forest(IV_MA_binary, studlab = c("Asthma", "CAD", "Eczema"))
+dev.off()
+
+# Continous only phenotypes
+png(file = "IV_MA_quant.png", width = 600, height = 600)
+setwd("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/")
+IV_MA_cont <- metaprop(MA_df[c(2,4,6:nrow(MA_df)),2], MA_df[c(2,4,6:nrow(MA_df)),3])
+forest(IV_MA_cont, studlab = c("BMI", "DBP", "Hip Circumference", "Pulse rate", "SBP", "Waist circumference"))
+dev.off()
+
+###################-------------------Meta-analysis:across P-value category -------------------###################
+list.names3 <- list.files(path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/My_results_dfs/For_figure3", 
+                          pattern = ".tsv", full.names = TRUE)
+
+df_3 <- lapply(list.names3, fread)
+
+names(df_3) <- c("Asthma", "BMI", "CAD", "DBP", "Eczema", "Hip Circumference", "Pulse rate", "SBP", "Waist circumference")
+
+# Assign P-value category
+df_3 <- lapply(df_3, function(x) {
+  x$P_value_cat <- ifelse(x$P_value >5e-9, "<5e-8 & >5e-9",
+         ifelse(x$P_value <5e-9 & x$P_value  >5e-10, "<5e-9 & >5e-10",
+         ifelse(x$P_value  <5e-10 & x$P_value  >5e-11, "<5e-10 & >5e-11","<5e-11")));return(x)
+})
+
+# Merge into one df
+new_df <- do.call(rbind, df_3)
+
+# Change "not" to "Not Replicated" 
+new_df$replicated <- gsub("not", "Not Replicated", new_df$replicated)
+
+# Remove != Discovery (currently double the number of SNPs)
+new_df <- filter(new_df, new_df$Cohort == "Discovery")
+
+# Make numeric column of replicated
+new_df$n_replicated <- ifelse(new_df$replicated == "Replicated",1,0)
+
+# Filter into df for each P-value category
+first <- filter(new_df, P_value_cat == "<5e-8 & >5e-9")
+second <- filter(new_df, P_value_cat == "<5e-9 & >5e-10")
+third <- filter(new_df, P_value_cat == "<5e-10 & >5e-11")
+fourth <- filter(new_df, P_value_cat == "<5e-11")
+
+## Get number of  a) total number of significant SNPs, b) replicaed significant SNPs per P-value
+# First: <5e-8 & >5e-9
+first_a_rep <- first %>%
+  group_by(Phenotype) %>%
+  summarise(rep_SNP = sum(n_replicated))
+
+first_a_totalSNPs <- first %>%
+  group_by(Phenotype) %>%
+  summarise(total_SNP = n())
+
+first_a <- merge(first_a_rep, first_a_totalSNPs, by="Phenotype")
+
+# Second: <5e-9 & >5e-10
+second_a_rep <- second %>%
+  group_by(Phenotype) %>%
+  summarise(rep_SNP = sum(n_replicated))
+
+second_a_totalSNPs <- second %>%
+  group_by(Phenotype) %>%
+  summarise(total_SNP = n())
+
+second_a <- merge(second_a_rep, second_a_totalSNPs, by="Phenotype")
+
+# Third: <5e-10 & >5e-11
+third_a_rep <- third %>%
+  group_by(Phenotype) %>%
+  summarise(rep_SNP = sum(n_replicated))
+
+third_a_totalSNPs <- third %>%
+  group_by(Phenotype) %>%
+  summarise(total_SNP = n())
+
+third_a <- merge(third_a_rep, third_a_totalSNPs, by="Phenotype")
+
+# Fourth <5e-11
+fourth_a_rep <- fourth %>%
+  group_by(Phenotype) %>%
+  summarise(rep_SNP = sum(n_replicated))
+
+fourth_a_totalSNPs <- fourth %>%
+  group_by(Phenotype) %>%
+  summarise(total_SNP = n())
+
+fourth_a <- merge(fourth_a_rep, fourth_a_totalSNPs, by="Phenotype")
+
+## Meta-analysis
+# First
+IV_MA_first <- metaprop(first_a$rep_SNP, first_a$total_SNP)
+png(file = "IV_MA_p_first.png", width = 600, height = 600)
+setwd("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/")
+forest(IV_MA_first, studlab = first_a$Phenotype)
+dev.off()
+
+# Second
+IV_MA_second <- metaprop(second_a$rep_SNP, second_a$total_SNP)
+png(file = "IV_MA_p_second.png", width = 600, height = 600)
+setwd("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/")
+IV_MA_second_plot <- forest(IV_MA_second, studlab = second_a$Phenotype)
+dev.off()
+
+# third
+IV_MA_third <- metaprop(third_a$rep_SNP, third_a$total_SNP)
+png(file = "IV_MA_p_third.png", width = 600, height = 600)
+setwd("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/")
+IV_MA_third_plot <- forest(IV_MA_third, studlab = third_a$Phenotype)
+dev.off()
+
+# fourth
+IV_MA_fourth <- metaprop(fourth_a$rep_SNP, fourth_a$total_SNP)
+png(file = "IV_MA_p_fourth.png", width = 600, height = 600)
+setwd("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/")
+IV_MA_fourth_plot <- forest(IV_MA_fourth, studlab = fourth_a$Phenotype)
+dev.off()
+
+###################-------------------Plot by p-value-------------------###################
+# Data for figure 3
+list.names3 <- list.files(path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/My_results_dfs/For_figure3", 
+                          pattern = ".tsv", full.names = TRUE)
+
+df_3 <- lapply(list.names3, fread)
+
+names(df_3) <- c("Asthma", "BMI", "CAD", "DBP", "Eczema", "Hip Circumference", "Pulse rate", "SBP", "Waist circumference")
+
+# Merge into one df
+new_df <- do.call(rbind, df_3)
+
+# Change "not" to "Not Replicated" 
+new_df$replicated <- gsub("not", "Not Replicated", new_df$replicated)
+
+# Make replicated a factor
+new_df$replicated <- as.factor(new_df$replicated)
+
+# Assign P-value category
+new_df$pvalue_cat <- ifelse(new_df$P_value  >5e-9, "<5e-8 & >5e-9",
+                            ifelse(new_df$P_value  <5e-9 & new_df$P_value  >5e-10, "<5e-9 & >5e-10",
+                                   ifelse(new_df$P_value  <5e-10 & new_df$P_value  >5e-11, "<5e-10 & >5e-11","<5e-11")))
+
+# Remove Cohort == Replication. new_df currently has double the amount of SNPs
+new_df_clean <- filter(new_df, Cohort == "Discovery")
+
+# Plot: all phenotypes together
+new_df_clean$pvalue_cat <- factor(new_df_clean$pvalue_cat, levels = c("<5e-8 & >5e-9","<5e-9 & >5e-10","<5e-10 & >5e-11", "<5e-11")) # Plot in order
+aa <- ggplot(new_df_clean, aes(pvalue_cat, fill = replicated)) + geom_bar() + 
+  xlab("Discovery Cohort P-value Category") + 
+  ylab("Count") + 
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw() + 
+  scale_fill_manual(values=wes_palette(n=2, name="Zissou1")) + 
+  theme(axis.text.x = element_text(angle = 50, hjust = 1)) +
+  theme(legend.title = element_blank())
+ggsave(plot = aa, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/", 
+       filename = "p_val_reproduce_all.tiff", device = "tiff", dpi = 300)
+
+
+# Plot: binary vs quanitiatve 
+new_df_clean$Trait <- ifelse(new_df_clean$Phenotype == "Asthma", "Binary", 
+                             ifelse(new_df_clean$Phenotype == "Eczema", "Binary",
+                                    ifelse(new_df_clean$Phenotype == "Coronary Artery Disease", "Binary", "Quantitative")))
+
+bb <- ggplot(new_df_clean, aes(pvalue_cat, fill = replicated)) + geom_bar() + 
+  xlab("Discovery Cohort P-value Category") + 
+  ylab("Count") + 
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw() + 
+  scale_fill_manual(values=wes_palette(n=2, name="Zissou1")) + 
+  theme(axis.text.x = element_text(angle = 50, hjust = 1)) + 
+  theme(legend.title = element_blank()) + 
+  facet_wrap( ~ Trait) 
+ggsave(plot = bb, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/", 
+       filename = "p_val_reproduce_traits.tiff", device = "tiff", dpi = 300)
+
+## Combine aa and bb
+library(ggpubr)
+# Remove legend from aa first
+aa <- ggplot(new_df_clean, aes(pvalue_cat, fill = replicated)) + geom_bar() + 
+  xlab("Discovery Cohort P-value Category") + 
+  ylab("Count") + 
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw() + 
+  scale_fill_manual(values=wes_palette(n=2, name="Zissou1")) + 
+  theme(axis.text.x = element_text(angle = 50, hjust = 1)) + theme(legend.position = "none")
+
+ee <- ggarrange(aa,bb, 
+                labels = c("A", "B"))
+ggsave(plot = ee, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/", 
+       filename = "combined_p_val_reproduce_all_traits.tiff", device = "tiff", dpi = 300, width = 30,
+       height = 15, units = c("cm"))
+
+
+# Plot: individual phenotypes (count)
+cc <- ggplot(new_df_clean, aes(pvalue_cat, fill = replicated)) + geom_bar() + 
+  xlab("Discovery Cohort P-value Category") + 
+  ylab("Count") + 
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw() +
+  scale_fill_manual(values=wes_palette(n=2, name="Zissou1")) + 
+  theme(axis.text.x = element_text(angle = 50, hjust = 1)) + 
+  theme(legend.title = element_blank()) +
+  facet_wrap( ~ Phenotype)
+ggsave(plot = cc, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/", 
+       filename = "p_val_reproduce_individual_phens_COUNT_dontuse.tiff", device = "tiff", dpi = 300)
+
+# Plot: individual phenotypes (%percentage instead of count) 
+dd <- ggplot(new_df_clean, aes(pvalue_cat, fill = replicated)) + geom_bar(position="fill") + 
+  xlab("Discovery Cohort P-value Category") + 
+  ylab("Count") + 
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw() +
+  scale_fill_manual(values=wes_palette(n=2, name="Zissou1")) + 
+  theme(axis.text.x = element_text(angle = 50, hjust = 1)) + 
+  theme(legend.title = element_blank()) + 
+  facet_wrap( ~ Phenotype)
+ggsave(plot = dd, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/", 
+       filename = "p_val_reproduce_individual_phens_per.tiff", device = "tiff", dpi = 300)
+
+
+###################-------------------Plot and Meta-analysis of OR-------------------###################
+list.names3 <- list.files(path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/My_results_dfs/For_figure3", 
+                          pattern = ".tsv", full.names = TRUE)
+
+df_3 <- lapply(list.names3, fread)
+
+names(df_3) <- c("Asthma", "BMI", "CAD", "DBP", "Eczema", "Hip Circumference", "Pulse rate", "SBP", "Waist circumference")
+
+# Merge into one df
+new_df <- do.call(rbind, df_3)
+
+# Change "not" to "Not Replicated" 
+new_df$replicated <- gsub("not", "Not Replicated", new_df$replicated)
+
+# Remove != Discovery (currently double the number of SNPs)
+new_df <- filter(new_df, new_df$Cohort == "Discovery")
+
+# Make numeric column of replicated
+new_df$n_replicated <- ifelse(new_df$replicated == "Replicated",1,0)
+
+# Make all OR > 1
+new_df$new_OR <- ifelse(new_df$OR <1, 1/new_df$OR, new_df$OR)
+
+# Categorize OR
+new_df$OR_cat <- ifelse(new_df$new_OR <1.05, ">1 to <1.05",
+                        ifelse(new_df$new_OR >=1.05 & new_df$new_OR <1.1, ">1.05 to <1.1",
+                               ifelse(new_df$new_OR >= 1.1 & new_df$new_OR <1.15, ">1.1 to <1.15",
+                                      ifelse(new_df$new_OR >= 1.15 & new_df$new_OR <1.2, ">1.15 to <1.2",
+                                             ifelse(new_df$new_OR >= 1.2 & new_df$new_OR <1.3, ">1.2 to <1.3",
+                                                    ifelse(new_df$new_OR >= 1.3 & new_df$new_OR <1.4,">1.3 to <1.4",
+                                                           ">1.4")))))) 
+# Plot 
+new_df$OR_cat <- factor(new_df$OR_cat, levels = c(">1 to <1.05", ">1.05 to <1.1",">1.1 to <1.15",">1.15 to <1.2", ">1.2 to <1.3", ">1.3 to <1.4", ">1.4"))    
+OR_all <- ggplot(new_df, aes(OR_cat, fill = replicated)) + geom_bar(position = "fill") +
+  theme_bw() + scale_fill_manual(values=wes_palette(n=2, name="Darjeeling2")) + 
+  ylab("Proportion") + xlab("Discovery GWAS Odds Ratio") + 
+  theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 50, hjust = 1))
+ggsave(plot = OR_all, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures", 
+       filename = "OR_all.tiff", device = "tiff", dpi = 300)
+
+# Plots per trait
+new_df$Trait <- ifelse(new_df$Phenotype == "Asthma", "Binary", 
+                             ifelse(new_df$Phenotype == "Eczema", "Binary",
+                                    ifelse(new_df$Phenotype == "Coronary Artery Disease", "Binary", "Quantitative")))
+OR_trait <- ggplot(new_df, aes(OR_cat, fill = replicated)) + geom_bar(position = "fill") +
+  theme_bw() + scale_fill_manual(values=wes_palette(n=2, name="Darjeeling2")) + 
+  ylab("Proportion") + xlab("Discovery GWAS Odds Ratio") + 
+  theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 50, hjust = 1)) +
+  facet_wrap(~Trait)
+ggsave(plot = OR_trait, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures", 
+       filename = "OR_trait.tiff", device = "tiff", dpi = 300)
+
+# Combine above
+OR_trait <- ggplot(new_df, aes(OR_cat, fill = replicated)) + geom_bar(position = "fill") +
+  theme_bw() + scale_fill_manual(values=wes_palette(n=2, name="Darjeeling2")) + 
+  ylab("Proportion") + xlab("Discovery GWAS Odds Ratio") + 
+  theme(legend.position = "none") + theme(axis.text.x = element_text(angle = 50, hjust = 1)) +
+  facet_wrap(~Trait)
+# remove legend from OR_all 
+combined_OR <- ggarrange(OR_all, OR_trait, labels = c("A", "B"))
+ggsave(plot = combined_OR, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures", 
+       filename = "combined_OR.tiff", device = "tiff", dpi = 300, width = 30,
+       height = 15, units = c("cm"))
+
+# Plots per phenotype
+OR_phenotype <- ggplot(new_df, aes(OR_cat, fill = replicated)) + geom_bar(position = "fill") +
+  theme_bw() + scale_fill_manual(values=wes_palette(n=2, name="Darjeeling2")) + 
+  ylab("Proportion") + xlab("Discovery GWAS Odds Ratio") + 
+  theme(legend.position = "none") + theme(axis.text.x = element_text(angle = 50, hjust = 1)) +
+  facet_wrap(~Phenotype)
+ggsave(plot = OR_phenotype, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures", 
+       filename = "OR_phenotype.tiff", device = "tiff", dpi = 300)
+
+## OR across cohorts (LINES)
+list.names3 <- list.files(path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/My_results_dfs/For_figure3", 
+                          pattern = ".tsv", full.names = TRUE)
+
+df_3 <- lapply(list.names3, fread)
+
+names(df_3) <- c("Asthma", "BMI", "CAD", "DBP", "Eczema", "Hip Circumference", "Pulse rate", "SBP", "Waist circumference")
+
+# Merge into one df
+new_df <- do.call(rbind, df_3)
+
+# Change "not" to "Not Replicated" 
+new_df$replicated <- gsub("not", "Not Replicated", new_df$replicated)
+
+# Plot
+all_OR_cohorts <- ggplot(data = new_df, aes(x = Cohort, y = OR, group = rsid)) + geom_line(aes(colour = replicated)) + 
+  geom_hline(yintercept = 1, linetype="dashed") + 
+  scale_color_discrete("SNP Replicated") +
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw() + 
+  theme(legend.title = element_blank()) + 
+  scale_colour_manual(values=wes_palette(n=2, name="Darjeeling2")) # Ignore colour warning
+ggsave(plot = all_OR_cohorts, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures", 
+       filename = "all_OR_cohorts.tiff", device = "tiff", dpi = 300)
+
+# Combine all_OR_cohorts and OR_all 
+all_OR_cohorts <- ggplot(data = new_df, aes(x = Cohort, y = OR, group = rsid)) + geom_line(aes(colour = replicated)) + 
+  geom_hline(yintercept = 1, linetype="dashed") + 
+  scale_color_discrete("SNP Replicated") +
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw() + 
+  theme(legend.position = "none") + 
+  scale_colour_manual(values=wes_palette(n=2, name="Darjeeling2")) # Remove legend, Ignore colour warning
+
+OR_combined <- ggarrange(all_OR_cohorts, OR_all, labels = c("A", "B")) # Be careful here, need to run each plot individually 
+ggsave(plot = OR_combined, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures", 
+       filename = "OR_combined.tiff", device = "tiff", dpi = 300, width = 30,
+       height = 15, units = c("cm"))
+
+# Standard plot per Trait
+new_df$Trait <- ifelse(new_df$Phenotype == "Asthma", "Binary", 
+                       ifelse(new_df$Phenotype == "Eczema", "Binary",
+                              ifelse(new_df$Phenotype == "Coronary Artery Disease", "Binary", "Quantitative")))
+OR_cohorts_trait <- ggplot(data = new_df, aes(x = Cohort, y = OR, group = rsid)) + geom_line(aes(colour = replicated)) + 
+  geom_hline(yintercept = 1, linetype="dashed") + 
+  scale_color_discrete("SNP Replicated") +
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw() +
+  scale_colour_manual(values=wes_palette(n=2, name="Darjeeling2")) +
+  theme(legend.title = element_blank())+
+  facet_wrap(~Trait)
+ggsave(plot = OR_cohorts_trait, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures", 
+       filename = "OR_cohorts_trait.tiff", device = "tiff", dpi = 300, width = 30,
+       height = 15, units = c("cm"))
+
+# Combine OR_trait and OR_cohorts_trait (not that useful)
+combinedR_trait_and_OR_cohorts_trait <- ggarrange(OR_cohorts_trait, OR_trait, labels =c("A", "B"), nrow = 2, ncol = 1)
+ggsave(plot = combinedR_trait_and_OR_cohorts_trait, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures", 
+       filename = "combinedR_trait_and_OR_cohorts_trait.tiff", device = "tiff", dpi = 300)
+
+
+# Standard plot by phenotype, quant traits
+new_df_binary <- filter(new_df, Trait == "Binary")
+OR_trait_binary <- ggplot(data = new_df_binary, aes(x = Cohort, y = OR, group = rsid)) + geom_line(aes(colour = replicated)) + 
+  geom_hline(yintercept = 1, linetype="dashed") + 
+  scale_color_discrete("SNP Replicated") +
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw() +
+  scale_colour_manual(values=wes_palette(n=2, name="Darjeeling2")) +
+  theme(legend.title = element_blank()) +
+  facet_wrap(~Phenotype) 
+ggsave(plot = OR_trait_binary, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures", 
+       filename = "OR_trait_binary.tiff", device = "tiff", dpi = 300)
+
+# Standard plot by phenotype, binary traits
+new_df_q <- filter(new_df, Trait != "Binary")
+OR_trait_quant <- ggplot(data = new_df_q, aes(x = Cohort, y = OR, group = rsid)) + geom_line(aes(colour = replicated)) + 
+  geom_hline(yintercept = 1, linetype="dashed") + 
+  scale_color_discrete("SNP Replicated") +
+  theme(plot.title = element_text(hjust = 0.5)) + theme_bw() +
+  scale_colour_manual(values=wes_palette(n=2, name="Darjeeling2")) +
+  theme(legend.title = element_blank()) +
+  facet_wrap(~Phenotype) 
+ggsave(plot = OR_trait_quant, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures", 
+       filename = "OR_trait_quant.tiff", device = "tiff", dpi = 300)
+
+# Combine by phenoty, quant and binary traits graphs (two above)
+combined_OR_trait_quant_binary <- ggarrange(OR_trait_binary, OR_trait_quant, nrow=2, ncol=1)
+ggsave(plot = combined_OR_trait_quant_binary, path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures", 
+       filename = "combined_OR_trait_quant_binary.tiff", device = "tiff", dpi = 300, height = 30, width = 30, units = c("cm"))
+
+## Meta-analysis per OR 
+list.names3 <- list.files(path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/My_results_dfs/For_figure3", 
+                          pattern = ".tsv", full.names = TRUE)
+
+df_3 <- lapply(list.names3, fread)
+
+names(df_3) <- c("Asthma", "BMI", "CAD", "DBP", "Eczema", "Hip Circumference", "Pulse rate", "SBP", "Waist circumference")
+
+# Merge into one df
+new_df <- do.call(rbind, df_3)
+
+# Change "not" to "Not Replicated" 
+new_df$replicated <- gsub("not", "Not Replicated", new_df$replicated)
+
+# Remove != Discovery (currently double the number of SNPs)
+new_df <- filter(new_df, new_df$Cohort == "Discovery")
+
+# Make numeric column of replicated
+new_df$n_replicated <- ifelse(new_df$replicated == "Replicated",1,0)
+
+# Make all OR > 1
+new_df$new_OR <- ifelse(new_df$OR <1, 1/new_df$OR, new_df$OR)
+
+# Categorize OR
+new_df$OR_cat <- ifelse(new_df$new_OR <1.05, ">1 to <1.05",
+                        ifelse(new_df$new_OR >=1.05 & new_df$new_OR <1.1, ">1.05 to <1.1",
+                               ifelse(new_df$new_OR >= 1.1 & new_df$new_OR <1.15, ">1.1 to <1.15",
+                                      ifelse(new_df$new_OR >= 1.15 & new_df$new_OR <1.2, ">1.15 to <1.2",
+                                             ifelse(new_df$new_OR >= 1.2 & new_df$new_OR <1.3, ">1.2 to <1.3",
+                                                    ifelse(new_df$new_OR >= 1.3 & new_df$new_OR <1.4,">1.3 to <1.4",
+                                                           ">1.4"))))))
+# Summarise 
+OR_cat_phenotype <- as.data.frame(new_df %>%
+  group_by(OR_cat, Phenotype) %>%
+  summarise(number_rep = sum(n_replicated), total_n = n()))
+
+# First: ">1 & <1.05"
+first_OR <- filter(OR_cat_phenotype, OR_cat_phenotype$OR_cat == ">1 to <1.05")
+first_OR_MA <- metaprop(first_OR$number_rep, first_OR$total_n)
+png(file = "first_OR.png", width = 600, height = 600)
+setwd("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/")
+forest(first_OR_MA, studlab = first_OR$Phenotype)
+dev.off()
+
+# Second >1.05 to <1.1"
+second_OR <- filter(OR_cat_phenotype, OR_cat_phenotype$OR_cat == ">1.05 to <1.1")
+second_OR_MA <- metaprop(second_OR$number_rep, second_OR$total_n)
+png(file = "second_OR.png", width = 600, height = 600)
+setwd("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/")
+forest(second_OR_MA, studlab = second_OR$Phenotype)
+dev.off()
+
+# third >1.1 to <1.15
+third_OR <- filter(OR_cat_phenotype, OR_cat_phenotype$OR_cat == ">1.1 to <1.15")
+third_OR_MA <- metaprop(third_OR$number_rep, third_OR$total_n)
+png(file = "third_OR.png", width = 600, height = 600)
+setwd("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/")
+forest(third_OR_MA, studlab = third_OR$Phenotype)
+dev.off()
+
+# four >1.15 to <1.2
+four_OR <- filter(OR_cat_phenotype, OR_cat_phenotype$OR_cat == ">1.15 to <1.2")
+four_OR_MA <- metaprop(four_OR$number_rep, four_OR$total_n)
+png(file = "four_OR.png", width = 600, height = 600)
+setwd("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/")
+forest(four_OR_MA, studlab = four_OR$Phenotype)
+dev.off()
+
+# fifth >1.2 to <1.3
+fifth_OR <- filter(OR_cat_phenotype, OR_cat_phenotype$OR_cat == ">1.2 to <1.3")
+fifth_OR_MA <- metaprop(fifth_OR$number_rep, fifth_OR$total_n)
+png(file = "fifth_OR.png", width = 600, height = 600)
+setwd("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/")
+forest(fifth_OR_MA, studlab = fifth_OR$Phenotype)
+dev.off()
+
+# sixth >1.3 to <1.4 (doesn't work, not enough data)
+# sixth_OR <- filter(OR_cat_phenotype, OR_cat_phenotype$OR_cat == ">1.3 to <1.4")
+# sixth_OR_MA <- metaprop(sixth_OR$number_rep, sixth_OR$total_n)
+# png(file = "sixth_OR.png", width = 600, height = 600)
+# setwd("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/")
+# forest(sixth_OR_MA, studlab = sixth_OR$Phenotype)
+# dev.off()
+
+# # seven >1.4 (only one disease: eczema)
+# sev_OR <- filter(OR_cat_phenotype, OR_cat_phenotype$OR_cat == ">1.4")
+# sev_OR_MA <- metaprop(sev_OR$number_rep, sev_OR$total_n)
+# png(file = "seventh_OR.png", width = 600, height = 600)
+# setwd("/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/Write_up/Figures/")
+# forest(sev_OR_MA, studlab = sev_OR$Phenotype)
+# dev.off()
+
+
+###################-------------------Regression-------------------###################
+library(dplyr)
+library(data.table)
+list.names <- list.files(path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/My_results_dfs",
+                         pattern = ".tsv$", full.names = TRUE)
+df_full <- lapply(list.names, fread)
+
+names <- c("Asthma", "BMI", "CAD", "DBP", "Eczema", "Hip Circumference", "Pulse rate", "SBP", "Waist circumference")
+
+names(df_full) <- names
+
+lm_df <- lapply(df_full, function(x) {select(x, )
+  x[,c("pubmed_p", "pubmed_OR", "pvalue_cat", "MAF_UKB", "MAF", "replicated", "trait")]})
+
+# Merge into one df
+lm_df <- do.call(rbind, lm_df)
+
+# Fix different names for not replicated
+lm_df$replicated <- gsub("not", "Not Replicated", lm_df$replicated)
+lm_df$replicated <- as.factor(lm_df$replicated) 
+
+# Make all OR above 1
+lm_df$pubmed_OR <- ifelse(lm_df$pubmed_OR < 1, 1/lm_df$pubmed_OR, lm_df$pubmed_OR)
+lm_df$pvalue_cat <- as.factor(lm_df$pvalue_cat)
+lm_df$pvalue_cat <- relevel(lm_df$pvalue_cat, ref = "<5e-8 & >5e-9") # Set reference level
+lm_df$replicated <- relevel(lm_df$replicated, ref = "Not Replicated") # Makes model predict Replication
+
+# Model
+mod_reg <-glm(replicated ~ pubmed_OR + pubmed_p + pvalue_cat + trait, data = lm_df, family = "binomial")
+summary(mod_reg)
+exp(cbind(OR = coef(mod_reg), confint(mod_reg)))
+# summary(glm(replicated ~ pubmed_OR + pubmed_p + pvalue_cat + trait + MAF + MAF_UKB, data = lm_df, family = "binomial"))
+
+# ADD IN SAMPLE SIZE, number of GWAS sign SNPs in discovery GWAS, MAF and other covariates
+
+##--Quantifying winner's curse: change in slope of pubmed OR to UKBB OR--##
+##--Winner's curse with only replicated SNPs--##
+library(dplyr)
+list.names3 <- list.files(path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/My_results_dfs/For_figure3", 
+                          pattern = ".tsv", full.names = TRUE)
+
+df_3 <- lapply(list.names3, fread)
+
+names(df_3) <- c("Asthma", "BMI", "CAD", "DBP", "Eczema", "Hip Circumference", "Pulse rate", "SBP", "Waist circumference")
+
+df_3_rep <- lapply(df_3, function (x) {
+  filter(x, x$replicated == "Replicated")
+}) 
+
+# Cast df_3 to give cols: rsid, OR_disc, OR_replication 
+library(reshape2)
+df_3_rep_cast <- lapply(df_3_rep, function(x) {
+  dcast(x, rsid ~ Cohort, value.var = "OR")
+})
+
+# Unlist
+df_3_rep_cast_df <- do.call(rbind, df_3_rep_cast)
+
+# Make all OR 1
+df_3_rep_cast_df$Discovery <- ifelse(df_3_rep_cast_df$Discovery < 1, 1/df_3_rep_cast_df$Discovery, df_3_rep_cast_df$Discovery)
+df_3_rep_cast_df$Replication <- ifelse(df_3_rep_cast_df$Replication < 1, 1/df_3_rep_cast_df$Replication, df_3_rep_cast_df$Replication)
+
+# Make rownames column
+df_3_rep_cast_df$ID <- rownames(df_3_rep_cast_df)
+
+# Regression
+mod_r <- lm(Replication ~ Discovery, data = df_3_rep_cast_df)
+summary(mod_r) # This shows a 0.90 increase in replication OR with a 1 unit increase in discover OR. Therefore, a ~10% decrease in SNP effect size (1-0.90)
+confint(mod_r)
+
+##--Model categorized by binary and continuous (replicated SNPs only)--##
+library(dplyr)
+df_3_rep <- lapply(df_3, function (x) {
+  filter(x, x$replicated == "Replicated")
+}) 
+
+# Cast df_3 to give cols: rsid, OR_disc, OR_replication 
+library(reshape2)
+df_3_rep_cast <- lapply(df_3_rep, function(x) {
+  dcast(x, rsid ~ Cohort, value.var = "OR")
+})
+
+##-Binary-##
+binary_cast <- list(df_3_rep_cast$Asthma, df_3_rep_cast$CAD, df_3_rep_cast$Eczema)
+
+# Unlist
+df_binary_cast <- do.call(rbind, binary_cast)
+
+# Make all OR 1
+df_binary_cast$Discovery <- ifelse(df_binary_cast$Discovery < 1, 1/df_binary_cast$Discovery, df_binary_cast$Discovery)
+df_binary_cast$Replication <- ifelse(df_binary_cast$Replication < 1, 1/df_binary_cast$Replication, df_binary_cast$Replication)
+
+# Make rownames column
+df_binary_cast$ID <- rownames(df_binary_cast)
+
+# Regression
+mod_b <- lm(Replication ~ Discovery, data = df_binary_cast)
+summary(mod_b) # This shows a 0.81976 increase in replication OR with a 1 unit increase in discover OR. Therefore, a 18% decrease in SNP effect size (1-0.83)
+confint(mod_b)
+
+##-Quanitative-##
+q_cast <- list(df_3_rep_cast$BMI, df_3_rep_cast$DBP, df_3_rep_cast$`Hip Circumference`, df_3_rep_cast$`Pulse rate`,
+               df_3_rep_cast$SBP, df_3_rep_cast$`Waist circumference`)
+
+# Unlist
+df_q_cast <- do.call(rbind, q_cast)
+
+# Make all OR 1
+df_q_cast$Discovery <- ifelse(df_q_cast$Discovery < 1, 1/df_q_cast$Discovery, df_q_cast$Discovery)
+df_q_cast$Replication <- ifelse(df_q_cast$Replication < 1, 1/df_q_cast$Replication, df_q_cast$Replication)
+
+# Make rownames column
+df_q_cast$ID <- rownames(df_q_cast)
+
+# Regression
+mod_q <- lm(Replication ~ Discovery, data = df_q_cast)
+summary(mod_q) # This shows a 1.12 increase in replication OR with a 1 unit increase in discover OR. Therefore, a 12% increase in SNP effect size
+confint(mod_q)
+
+#--Winner's curse with all SNPs (replicated and not)--#
+library(dplyr)
+list.names3 <- list.files(path = "/Users/jackosullivan/Documents/Stanford_work/GWAS_repro/My_results_dfs/For_figure3", 
+                          pattern = ".tsv", full.names = TRUE)
+
+df_3 <- lapply(list.names3, fread)
+
+names(df_3) <- c("Asthma", "BMI", "CAD", "DBP", "Eczema", "Hip Circumference", "Pulse rate", "SBP", "Waist circumference")
+
+# Cast df_3 to give cols: rsid, OR_disc, OR_replication
+library(reshape2)
+df_3_cast <- lapply(df_3, function(x) {
+  dcast(x, rsid ~ Cohort, value.var = "OR")
+})
+
+# Unlist
+df_3_cast_df <- do.call(rbind, df_3_cast)
+
+# Make all OR 1
+df_3_cast_df$Discovery <- ifelse(df_3_cast_df$Discovery < 1, 1/df_3_cast_df$Discovery, df_3_cast_df$Discovery)
+df_3_cast_df$Replication <- ifelse(df_3_cast_df$Replication < 1, 1/df_3_cast_df$Replication, df_3_cast_df$Replication)
+
+# Make rownames column
+df_3_cast_df$ID <- rownames(df_3_cast_df)
+
+# Regression
+mod <- lm(Replication ~ Discovery, data = df_3_cast_df)
+summary(mod) 
+confint(mod)
+
+# plot
+library(ggplot2)
+ggplot(data = df_3_cast_df, aes(x = Discovery, y = Replication)) + geom_point() + geom_smooth(method = "lm")
+
+##-Binary-##
+binary_cast <- list(df_3_cast$Asthma, df_3_cast$CAD, df_3_cast$Eczema)
+
+# Unlist
+df_binary_cast <- do.call(rbind, binary_cast)
+
+# Make all OR 1
+df_binary_cast$Discovery <- ifelse(df_binary_cast$Discovery < 1, 1/df_binary_cast$Discovery, df_binary_cast$Discovery)
+df_binary_cast$Replication <- ifelse(df_binary_cast$Replication < 1, 1/df_binary_cast$Replication, df_binary_cast$Replication)
+
+# Make rownames column
+df_binary_cast$ID <- rownames(df_binary_cast)
+
+# Regression
+mod_b <- lm(Replication ~ Discovery, data = df_binary_cast)
+summary(mod_b) # 0.86371
+confint(mod_b)
+
+##-Quanitative-##
+q_cast <- list(df_3_cast$BMI, df_3_cast$DBP, df_3_cast$`Hip Circumference`, df_3_cast$`Pulse rate`,
+               df_3_cast$SBP, df_3_cast$`Waist circumference`)
+
+# Unlist
+df_q_cast <- do.call(rbind, q_cast)
+
+# Make all OR 1
+df_q_cast$Discovery <- ifelse(df_q_cast$Discovery < 1, 1/df_q_cast$Discovery, df_q_cast$Discovery)
+df_q_cast$Replication <- ifelse(df_q_cast$Replication < 1, 1/df_q_cast$Replication, df_q_cast$Replication)
+
+# Make rownames column
+df_q_cast$ID <- rownames(df_q_cast)
+
+# Regression
+mod_q <- lm(Replication ~ Discovery, data = df_q_cast)
+summary(mod_q) 
+confint(mod_q)
+
+###################-------------------Prediction model-------------------###################
+library(dplyr)
+lm_df <- lapply(df_full, function(x) {select(x, )
+  x[,c("pubmed_p", "pubmed_OR", "pvalue_cat", "MAF_UKB", "MAF", "replicated", "trait")]})
+
+# Merge into one df
+lm_df <- do.call(rbind, lm_df)
+
+# Fix different names for not replicated
+lm_df$replicated <- gsub("not", "Not Replicated", lm_df$replicated)
+lm_df$replicated <- as.factor(lm_df$replicated) 
+
+# Make all OR above 1
+lm_df$pubmed_OR <- ifelse(lm_df$pubmed_OR < 1, 1/lm_df$pubmed_OR, lm_df$pubmed_OR)
+lm_df$pvalue_cat <- as.factor(lm_df$pvalue_cat)
+lm_df$pvalue_cat <- relevel(lm_df$pvalue_cat, ref = "<5e-8 & >5e-9") # Set reference level
+lm_df$replicated <- relevel(lm_df$replicated, ref = "Not Replicated") # Makes model predict Replication
+
+##--All phenotypes
+
+# Split combined randomly into two df
+smp_size <- floor(0.5 * nrow(lm_df))
+set.seed(123) # Random number generator
+train_no <- sample(seq_len(nrow(lm_df)), size = smp_size)
+train <- lm_df[train_no,]
+train$replicated <- relevel(train$replicated, ref = "Not Replicated") # Makes model predict Replication
+test <- lm_df[-train_no,]
+test$replicated <- relevel(test$replicated, ref = "Not Replicated") # Makes model predict Replication
+
+## Prediction model
+# Do glm on train dataset
+train_mod <- glm(replicated ~ pubmed_OR + pvalue_cat + trait, data = train, family = "binomial")
+summary(train_mod)
+confint(train_mod)
+exp(cbind(OR = coef(train_mod), confint(train_mod))) 
+
+# Predict in test dataset
+test$prob <- predict(train_mod, newdata = test, type = "response") 
+head(test)
+
+## Check model fit
+# Psuedo R2
+library(pscl)
+pR2(train_mod)
+
+# AUC for above model 
+library(pROC)
+test_roc <- roc(replicated ~ prob, data = test, ci = TRUE)
+plot(test_roc) 
+print(ci(test_roc))
+coords(test_roc, "best", ci.se = TRUE, ci.sp = TRUE)
